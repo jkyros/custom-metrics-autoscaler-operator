@@ -101,4 +101,30 @@ jq_filter="$jq_filter"'.spec.install.spec.deployments[0].spec.template.spec.cont
 
 if ! test "$dry_run" = "1"; then
   mv keda/${ver}/manifests/cma.v${ver}.clusterserviceversion.yaml.new keda/${ver}/manifests/cma.v${ver}.clusterserviceversion.yaml
+  cat << EOF > keda/${ver}/Dockerfile.ci
+FROM scratch
+COPY /manifests /manifests
+COPY /metadata /metadata
+
+LABEL com.redhat.component="custom-metrics-autoscaler-operator-bundle-container" 
+LABEL name="custom-metrics-autoscaler-operator-metadata-rhel-8" 
+LABEL version="v0.0.0" 
+LABEL summary="Custom Metrics Autoscaler for OpenShift bundle image" 
+LABEL io.openshift.expose-services="" 
+LABEL io.openshift.tags="openshift,custom-metrics-autoscaler-operator" 
+LABEL io.k8s.display-name="openshift-custom-metrics-autoscaler-operator" 
+LABEL maintainer="AOS workloads team, <aos-workloads@redhat.com>" 
+LABEL description="Custom Metrics Autoscaler for OpenShift bundle image" 
+LABEL com.redhat.delivery.operator.bundle=true 
+# TODO(jkyros): look up the matching openshift version so this isn't a hard code 
+LABEL com.redhat.openshift.versions="=v4.15" 
+LABEL operators.operatorframework.io.bundle.channel.default.v1=stable 
+LABEL operators.operatorframework.io.bundle.channels.v1=stable 
+LABEL operators.operatorframework.io.bundle.manifests.v1=manifests/ 
+LABEL operators.operatorframework.io.bundle.mediatype.v1="registry+v1" 
+LABEL operators.operatorframework.io.bundle.metadata.v1=metadata/ 
+LABEL operators.operatorframework.io.bundle.package.v1="openshift-custom-metrics-autoscaler-operator"
+EOF
 fi
+
+
