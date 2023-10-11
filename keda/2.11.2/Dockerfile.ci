@@ -2,6 +2,8 @@ FROM scratch
 
 COPY /manifests /manifests
 COPY /metadata /metadata
+# if we don't take this out, we get "duplicate csv" 
+RUN rm keda.v2.11.2.clusterserviceversion.yaml
 
 LABEL com.redhat.component="custom-metrics-autoscaler-operator-bundle-container" 
 LABEL name="custom-metrics-autoscaler-operator-metadata-rhel-8" 
