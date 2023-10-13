@@ -1,0 +1,40 @@
+# Build the manager binary
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.20-openshift-4.15 AS stage0 
+
+
+ARG BUILD_VERSION=main
+ARG GIT_COMMIT=HEAD
+ARG GIT_VERSION=main
+
+COPY . . 
+# Build
+RUN VERSION=${BUILD_VERSION} GIT_COMMIT=${GIT_COMMIT} GIT_VERSION=${GIT_VERSION} make build
+
+FROM registry.redhat.io/ubi9/ubi-minimal:latest
+WORKDIR / 
+COPY --from=stage0 /go/src/github.com/openshift/origin/resources /go/src/github.com/openshift/origin/resources
+COPY --from=stage0 /go/src/github.com/openshift/origin/bin /usr/bin/
+RUN ln -s /usr/bin/manager /manager
+
+#COPY --from=builder $REMOTE_SOURCES_DIR/keda-operator/app/must-gather/collection-scripts/* /usr/bin/
+#COPY --from=cli /usr/bin/oc /usr/bin
+#RUN ln -s /usr/bin/oc /usr/bin/kubectl
+
+USER nobody
+
+LABEL io.k8s.display-name="OpenShift Custom Metrics Autoscaler Operator" \
+      io.k8s.description="This is a component of OpenShift which manages Custom Metrics Autoscaler." \
+      com.redhat.component="custom-metrics-autoscaler-operator-container" \
+      name="custom-metrics-autoscaler-operator-rhel-8" \
+      version="${CI_UPSTREAM_VERSION_SANITIZED}" \
+      release="${CI_SPEC_RELEASE}" \
+      upstream-version="${CI_CUSTOM_METRICS_AUTOSCALER_OPERATOR_UPSTREAM_VERSION}" \
+      upstream-vcs-ref="${CI_CUSTOM_METRICS_AUTOSCALER_OPERATOR_UPSTREAM_COMMIT}" \
+      upstream-vcs-type="git" \
+      summary="custom-metrics-autoscaler-operator" \
+      io.openshift.expose-services="" \
+      io.openshift.tags="openshift,custom-metrics-autoscaler-operator" \
+      description="custom-metrics-autoscaler-operator-container" \
+      maintainer="AOS node team <aos-node@redhat.com>"
+
+CMD ["/usr/bin/manager"]
