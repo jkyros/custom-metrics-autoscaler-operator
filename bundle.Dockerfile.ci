@@ -1,7 +1,7 @@
 # This enables us to build a release-ish image in CI. It won't be exactly the same as what we release, 
 # but it should approximate it well enough for now that it gives us some signal. 
 
-FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.20-openshift-4.15 as builder
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.20-openshift-4.15 as builder
 RUN dnf install -y jq
 # we need to build some things so we need the sources
 COPY . . 
@@ -12,23 +12,42 @@ RUN KEDA_BUILD_VERSION=$(ls keda/ | sort -V  | tail  -n 1) && \
   mv ./keda/0.0.0/manifests/keda.v$KEDA_BUILD_VERSION.clusterserviceversion.yaml ./keda/0.0.0/manifests/keda.v0.0.0.clusterserviceversion.yaml && \
   rm -f ./keda/0.0.0/manifests/cma.*.clusterserviceversion.yaml && \
   sed -i 's/replaces:\s+(.+?)$/replaces: keda.v$KEDA_BUILD_VERSION/' ./keda/0.0.0/manifests/keda.v0.0.0.clusterserviceversion.yaml
+
 # build the test utils so our manifest generations and hack scripts work 
 RUN make build-testutil
+# make the manifests in the event that someone didn't 
 RUN make manifests 
 # update the CRDs in our release to match what's here 
 RUN cp config/crd/bases/keda.sh_kedacontrollers.yaml keda/0.0.0/manifests/
 # generate a "redhat flavor" csv for this "ci release"
 RUN hack/cma-generate-csv.sh 0.0.0
 
+# THIS DOESN'T WORK BECAUSE THE REWRITE ALREADY HAPPENED AT THIS POINT 
+# our cma csv generator script still leaves the upstream image in there and that version could change at any time
+# so we normalize it to something that CI can override 
+#RUN OPERATOR_IMAGE=$(bin/yaml2json ./keda/0.0.0/manifests/keda.v0.0.0.clusterserviceversion.yaml | jq -r .metadata.annotations.containerImage) && \
+#  sed -i s?$OPERATOR_IMAGE?CI_IMAGE_PLACEHOLDER?g ./keda/0.0.0/manifests/cma.v0.0.0.clusterserviceversion.yaml 
+
 # if there are two csvs, the bundle will not validate, so delete the upstream one now that we're done using it
 RUN rm keda/0.0.0/manifests/keda.*.clusterserviceversion.yaml
-
+# remove whatever was already in bundle 
+Run rm -rf ./bundle
+# our version 0.0.0 release is now the bundle 
 RUN mv ./keda/0.0.0/ /bundle/
+
+# This is more or less what the OpenShift CI bundle builder does to our sources on substititution, we're going to let them do it, but I'll leave this
+# in for troubleshooting
+#RUN find /bundle/ -type f -regex ".*\.\(yaml\|yml\)" -exec sed -i s?CI_IMAGE_PLACEHOLDER?registry.ci.openshift.org/ocp/4.15:custom-metrics-autoscaler-operator?g {} +
+#RUN find /bundle/ -type f -regex ".*\.\(yaml\|yml\)" -exec sed -i s?CMA_OPERAND_PLACEHOLDER_1?registry.ci.openshift.org/ocp/4.15:custom-metrics-autoscaler?g {} +
+#RUN find /bundle/ -type f -regex ".*\.\(yaml\|yml\)" -exec sed -i s?CMA_OPERAND_PLACEHOLDER_2?registry.ci.openshift.org/ocp/4.15:custom-metrics-autoscaler-adapter?g {} +
+#RUN find /bundle/ -type f -regex ".*\.\(yaml\|yml\)" -exec sed -i s?CMA_OPERAND_PLACEHOLDER_3?registry.ci.openshift.org/ocp/4.15:custom-metrics-autoscaler-webhooks?g {} +
+
+RUN cat /bundle/manifests/cma.v0.0.0.clusterserviceversion.yaml
 
 FROM scratch
 
 # TODO(jkyros): There are other things that dist-git injects (like gather scripts) but I'm not going to 
-# do that now, we'll come back for it 
+# do that now, we'll come back for it if we need to 
 
 # OpenShift bundle labels 
 LABEL com.redhat.component="custom-metrics-autoscaler-operator-bundle-container" \
@@ -50,6 +69,6 @@ LABEL com.redhat.component="custom-metrics-autoscaler-operator-bundle-container"
       operators.operatorframework.io.bundle.package.v1="openshift-custom-metrics-autoscaler-operator"
 
 
-# Copy files to locations specified by labels.
+# Copy files to locations specified by labels
 COPY --from=builder bundle/manifests/ /manifests/
 COPY --from=builder bundle/metadata/ /metadata/
