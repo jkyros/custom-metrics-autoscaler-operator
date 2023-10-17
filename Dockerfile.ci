@@ -1,0 +1,46 @@
+# Build the manager binary
+# We need to build using the openshift builder in CI
+FROM registry.ci.openshift.org/openshift/release:rhel-9-release-golang-1.20-openshift-4.15 as builder
+
+ARG BUILD_VERSION=main
+ARG GIT_COMMIT=HEAD
+ARG GIT_VERSION=main
+
+WORKDIR /workspace
+
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# The OpenShift go builder forces module things, so download doesn't work here like upstream does it, we need to copy the
+# vendor dir in instead 
+COPY vendor/ vendor/
+
+COPY Makefile Makefile
+
+# Copy the go source
+COPY hack/ hack/
+COPY version/ version/
+COPY main.go main.go
+COPY apis/ apis/
+COPY controllers/ controllers/
+COPY resources/ resources/
+
+# Build
+RUN VERSION=${BUILD_VERSION} GIT_COMMIT=${GIT_COMMIT} GIT_VERSION=${GIT_VERSION} make build
+
+# Use the rhel release image instead of distroless for openshift 
+FROM registry.ci.openshift.org/openshift/release:rhel-9-release-golang-1.20-openshift-4.15
+WORKDIR /
+COPY --from=builder /workspace/resources/keda.yaml /workspace/resources/keda.yaml
+COPY --from=builder /workspace/resources/keda-olm-operator.yaml /workspace/resources/keda-olm-operator.yaml
+COPY --from=builder /workspace/bin/manager .
+
+# OpenShift cma csv expects these things in these locations
+RUN ln -s /manager /usr/bin/manager
+RUN ln -s /workspace/resources /resources
+
+USER nobody
+
+# Openshift cma csv expects entrypoint to be in /usr/bin
+ENTRYPOINT ["/usr/bin/manager"]

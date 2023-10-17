@@ -1,0 +1,55 @@
+# This enables us to build a release-ish image in CI. It won't be exactly the same as what we release, 
+# but it should approximate it well enough for now that it gives us some signal. 
+
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.20-openshift-4.15 as builder
+RUN dnf install -y jq
+# we need to build some things so we need the sources
+COPY . . 
+
+# release a new dummy release v0.0.0 from our last release, trying to go through all the steps in the RELEASE-PROCESS 
+RUN KEDA_BUILD_VERSION=$(ls keda/ | sort -V  | tail  -n 1) && \
+  cp -r ./keda/$KEDA_BUILD_VERSION ./keda/0.0.0 && \
+  mv ./keda/0.0.0/manifests/keda.v$KEDA_BUILD_VERSION.clusterserviceversion.yaml ./keda/0.0.0/manifests/keda.v0.0.0.clusterserviceversion.yaml && \
+  rm -f ./keda/0.0.0/manifests/cma.*.clusterserviceversion.yaml && \
+  sed -i 's/replaces:\s+(.+?)$/replaces: keda.v$KEDA_BUILD_VERSION/' ./keda/0.0.0/manifests/keda.v0.0.0.clusterserviceversion.yaml
+# build the test utils so our manifest generations and hack scripts work 
+RUN make build-testutil
+RUN make manifests 
+# update the CRDs in our release to match what's here 
+RUN cp config/crd/bases/keda.sh_kedacontrollers.yaml keda/0.0.0/manifests/
+# generate a "redhat flavor" csv for this "ci release"
+RUN hack/cma-generate-csv.sh 0.0.0
+
+# if there are two csvs, the bundle will not validate, so delete the upstream one now that we're done using it
+RUN rm keda/0.0.0/manifests/keda.*.clusterserviceversion.yaml
+
+RUN mv ./keda/0.0.0/ /bundle/
+
+FROM scratch
+
+# TODO(jkyros): There are other things that dist-git injects (like gather scripts) but I'm not going to 
+# do that now, we'll come back for it 
+
+# OpenShift bundle labels 
+LABEL com.redhat.component="custom-metrics-autoscaler-operator-bundle-container" \
+      name="custom-metrics-autoscaler-operator-metadata-rhel-8" \
+      version="v0.0.0" \
+      summary="Custom Metrics Autoscaler for OpenShift bundle image" \
+      io.openshift.expose-services="" \
+      io.openshift.tags="openshift,custom-metrics-autoscaler-operator" \
+      io.k8s.display-name="openshift-custom-metrics-autoscaler-operator" \
+      maintainer="AOS workloads team, <aos-workloads@redhat.com>" \
+      description="Custom Metrics Autoscaler for OpenShift bundle image" \
+      com.redhat.delivery.operator.bundle=true \
+      com.redhat.openshift.versions="v4.15" \
+      operators.operatorframework.io.bundle.channel.default.v1=stable \
+      operators.operatorframework.io.bundle.channels.v1=stable \
+      operators.operatorframework.io.bundle.manifests.v1=manifests/ \
+      operators.operatorframework.io.bundle.mediatype.v1="registry+v1" \
+      operators.operatorframework.io.bundle.metadata.v1=metadata/ \
+      operators.operatorframework.io.bundle.package.v1="openshift-custom-metrics-autoscaler-operator"
+
+
+# Copy files to locations specified by labels.
+COPY --from=builder bundle/manifests/ /manifests/
+COPY --from=builder bundle/metadata/ /metadata/
