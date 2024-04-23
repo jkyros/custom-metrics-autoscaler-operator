@@ -742,28 +742,28 @@ func (r *KedaControllerReconciler) ensureMetricsServerAuditLogPolicyConfigMap(ct
 	realPolicy.OmitStages = policy.OmitStages
 	realPolicy.OmitManagedFields = policy.OmitManagedFields
 
+	// generate the new configmap data regardless, we need to compare
+	// it to what's already in the cluster
+	generatedConfigMap := &corev1.ConfigMap{}
+	generatedConfigMap.Name = auditlogPolicyConfigMap
+	generatedConfigMap.Namespace = instance.Namespace
+	generatedConfigMap.Data = make(map[string]string)
+
+	dataBytes, err := yaml.Marshal(realPolicy)
+	if err != nil {
+		logger.Error(err, "failed to Marshal Auditlog Policy struct")
+		return err
+	}
+	generatedConfigMap.Data[auditPolicyFile] = string(dataBytes)
+
+	configMapUpdate := false
+
 	configMap := &corev1.ConfigMap{}
-	err := r.Client.Get(ctx, types.NamespacedName{Name: auditlogPolicyConfigMap, Namespace: instance.Namespace}, configMap)
+	err = r.Client.Get(ctx, types.NamespacedName{Name: auditlogPolicyConfigMap, Namespace: instance.Namespace}, configMap)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// create ConfigMap if not found
-			configMap.Name = auditlogPolicyConfigMap
-			configMap.Namespace = instance.Namespace
-			configMap.Data = make(map[string]string)
-
-			dataBytes, err := yaml.Marshal(realPolicy)
-			if err != nil {
-				logger.Error(err, "failed to Marshal Auditlog Policy struct")
-				return err
-			}
-			configMap.Data[auditPolicyFile] = string(dataBytes)
-
-			if err := controllerutil.SetControllerReference(instance, configMap, r.Scheme); err != nil {
-				logger.Error(err, "failed to set Controller Reference for Auditlog Policy ConfigMap")
-				return err
-			}
-
-			err = r.Client.Create(ctx, configMap)
+			err = r.Client.Create(ctx, generatedConfigMap)
 			if err != nil {
 				logger.Error(err, "failed to create new Audit Policy ConfigMap in cluster", "ConfigMap.Namespace", instance.Namespace, "ConfigMap.Name", auditlogPolicyConfigMap)
 				return err
@@ -773,9 +773,15 @@ func (r *KedaControllerReconciler) ensureMetricsServerAuditLogPolicyConfigMap(ct
 		// Error reading the object
 		logger.Error(err, "failed to get ConfigMap from cluster")
 		return err
+	} else {
+		// If the configmap is there, but it doesn't match, we need
+		// to update it with the proper data
+		if !reflect.DeepEqual(configMap.Data, generatedConfigMap.Data) {
+			logger.Info("Updating audit policy configmap, data has changed")
+			configMap.Data = generatedConfigMap.Data
+			configMapUpdate = true
+		}
 	}
-
-	configMapUpdate := false
 
 	if err := controllerutil.SetControllerReference(instance, configMap, r.Scheme); err != nil {
 		if !goerrors.Is(err, &controllerutil.AlreadyOwnedError{}) {
