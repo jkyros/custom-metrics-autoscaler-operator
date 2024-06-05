@@ -141,6 +141,28 @@ var _ = Describe("Testing functionality", func() {
 			manifest, err = createManifest(kedaManifestFilepath, k8sClient)
 			Expect(err).To(BeNil())
 			Expect(manifest.Apply()).Should(Succeed())
+
+			// We need to wait for this to roll out at least the first because we need to know it's properly
+			// set to the default and we want to make sure we don't end up with weird collisions.
+			// We were okay before because we weren't checking the errors in some places below :)
+			// TODO(jkyros): This does not check that *our* deployment was deployed, just that the
+			// log level is set back to "info" because we know that's what's inthe manifest we're applying.
+			Eventually(func() error {
+				u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+				err = scheme.Convert(u, dep, nil)
+				if err != nil {
+					return err
+				}
+				arg, err = getDepArg(dep, logLevelPrefix, containerName)
+				if err != nil {
+					return err
+				}
+
+				if arg == "info" {
+					return nil
+				}
+				return err
+			}, timeout, interval).Should(Succeed())
 		})
 
 		Context("When changing \"--zap-log-level\"", func() {
@@ -160,6 +182,7 @@ var _ = Describe("Testing functionality", func() {
 					initialLogLevel: "error",
 					actualLogLevel:  "error",
 				},
+				// the default in the sample kedacontroller manifest is "info", so "info" in this list can also mean "make sure it doesn't change"
 				{
 					initialLogLevel: "",
 					actualLogLevel:  "info",
@@ -175,21 +198,32 @@ var _ = Describe("Testing functionality", func() {
 					variant.initialLogLevel, variant.actualLogLevel), func() {
 
 					manifest, err = changeAttribute(manifest, "logLevel", variant.initialLogLevel, scheme)
-					_ = manifest.Apply()
+					Expect(err).To(BeNil())
+					err = manifest.Apply()
+					Expect(err).To(BeNil())
 
+					// Wait for the deployment to get updated with the proper log level
 					Eventually(func() error {
-						_, err = getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-						return err
+						u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+						if err != nil {
+							return err
+						}
+						err = scheme.Convert(u, dep, nil)
+						if err != nil {
+							return err
+						}
+						arg, err = getDepArg(dep, logLevelPrefix, containerName)
+						if err != nil {
+							return err
+						}
+
+						if arg == variant.actualLogLevel {
+							return nil
+						}
+
+						return fmt.Errorf("Log level has not been properly updated")
 					}, timeout, interval).Should(Succeed())
 
-					u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-					Expect(err).To(BeNil())
-					err = scheme.Convert(u, dep, nil)
-					Expect(err).To(BeNil())
-
-					arg, err = getDepArg(dep, logLevelPrefix, containerName)
-					Expect(err).To(BeNil())
-					Expect(arg).To(Equal(variant.actualLogLevel))
 				})
 			}
 		})
@@ -223,6 +257,28 @@ var _ = Describe("Testing functionality", func() {
 			manifest, err = createManifest(kedaManifestFilepath, k8sClient)
 			Expect(err).To(BeNil())
 			Expect(manifest.Apply()).Should(Succeed())
+
+			// We need to wait for this to roll out at least the first because we need to know it's properly
+			// set to the default and we want to make sure we don't end up with weird collisions.
+			// We were okay before because we weren't checking the errors in some places below :)
+			// TODO(jkyros): This does not check that *our* deployment was deployed, just that the
+			// log level is set back to "info" because we know that's what's inthe manifest we're applying.
+			Eventually(func() error {
+				u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+				err = scheme.Convert(u, dep, nil)
+				if err != nil {
+					return err
+				}
+				arg, err = getDepArg(dep, logLevelPrefix, containerName)
+				if err != nil {
+					return err
+				}
+
+				if arg == "info" {
+					return nil
+				}
+				return err
+			}, timeout, interval).Should(Succeed())
 		})
 
 		Context("When changing \"--zap-log-level\"", func() {
@@ -242,6 +298,7 @@ var _ = Describe("Testing functionality", func() {
 					initialLogLevel: "error",
 					actualLogLevel:  "error",
 				},
+				// the default in the sample kedacontroller manifest is "info", so "info" in this list can also mean "make sure it doesn't change"
 				{
 					initialLogLevel: "",
 					actualLogLevel:  "info",
@@ -256,22 +313,33 @@ var _ = Describe("Testing functionality", func() {
 				It(fmt.Sprintf("Should change it, initialLoglevel='%s', actualLoglevel='%s'",
 					variant.initialLogLevel, variant.actualLogLevel), func() {
 
-					manifest, err = changeAttribute(manifest, "logLevel", variant.initialLogLevel, scheme)
-					_ = manifest.Apply()
+					manifest, err = changeAttribute(manifest, "logLevel-admission", variant.initialLogLevel, scheme)
+					Expect(err).To(BeNil())
+					err = manifest.Apply()
+					Expect(err).To(BeNil())
 
+					// Wait for the deployment to get updated with the proper log level
 					Eventually(func() error {
-						_, err = getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-						return err
+						u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+						if err != nil {
+							return err
+						}
+						err = scheme.Convert(u, dep, nil)
+						if err != nil {
+							return err
+						}
+						arg, err = getDepArg(dep, logLevelPrefix, containerName)
+						if err != nil {
+							return err
+						}
+
+						if arg == variant.actualLogLevel {
+							return nil
+						}
+
+						return fmt.Errorf("Log level has not been properly updated")
 					}, timeout, interval).Should(Succeed())
 
-					u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-					Expect(err).To(BeNil())
-					err = scheme.Convert(u, dep, nil)
-					Expect(err).To(BeNil())
-
-					arg, err = getDepArg(dep, logLevelPrefix, containerName)
-					Expect(err).To(BeNil())
-					Expect(arg).To(Equal(variant.actualLogLevel))
 				})
 			}
 		})
@@ -381,6 +449,12 @@ func changeAttribute(manifest mf.Manifest, attr string, value string, scheme *ru
 			kedaControllerInstance.Namespace = value
 		case "logLevel":
 			kedaControllerInstance.Spec.Operator.LogLevel = value
+		// TODO(jkyros): should probably a separate arg or separate function, this
+		// breaks pattern with the rest of these cases but multiple operands have
+		// the same field so we need to test them separately
+		case "logLevel-admission":
+			kedaControllerInstance.Spec.AdmissionWebhooks.LogLevel = value
+
 		// metricsServer audit arguments
 		case "auditLogFormat":
 			kedaControllerInstance.Spec.MetricsServer.AuditConfig.LogFormat = value
