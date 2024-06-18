@@ -69,7 +69,7 @@ var _ = Describe("Deploying KedaController manifest", func() {
 		})
 
 		AfterEach(func() {
-			manifest, err = changeAttribute(manifest, "namespace", namespace, scheme)
+			manifest, err = changeAttribute(manifest, "namespace", namespace, scheme, "")
 			Expect(err).To(BeNil())
 
 			Expect(manifest.Delete()).Should(Succeed())
@@ -97,7 +97,7 @@ var _ = Describe("Deploying KedaController manifest", func() {
 
 			It("Should not deploy KedaController", func() {
 
-				manifest, err = changeAttribute(manifest, "namespace", changedNamespace, scheme)
+				manifest, err = changeAttribute(manifest, "namespace", changedNamespace, scheme, "")
 				Expect(err).To(BeNil())
 
 				Expect(manifest.Apply()).Should(Succeed())
@@ -136,11 +136,37 @@ var _ = Describe("Testing functionality", func() {
 			dep      = &appsv1.Deployment{}
 		)
 
+		waitForTestCaseLogLevel := func(logLevel string, deploymentAnnotation string) error {
+			u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+			if err != nil {
+				return err
+			}
+			err = scheme.Convert(u, dep, nil)
+			if err != nil {
+				return err
+			}
+			arg, err = getDepArg(dep, logLevelPrefix, containerName)
+			if err != nil {
+				return err
+			}
+			testcase, ok := u.GetAnnotations()["testCase"]
+			if ok && deploymentAnnotation == testcase && arg == logLevel {
+				return nil
+			}
+			return fmt.Errorf("log level was not set to %s, log level was %s", logLevel, arg)
+
+		}
+
 		BeforeEach(func() {
+			By("Applying a manifest that defaults operator logLevel back to info")
 			scheme = k8sManager.GetScheme()
 			manifest, err = createManifest(kedaManifestFilepath, k8sClient)
 			Expect(err).To(BeNil())
+			manifest, err = changeAttribute(manifest, "logLevel", "info", scheme, "default")
+			Expect(err).To(BeNil())
 			Expect(manifest.Apply()).Should(Succeed())
+			By("Waiting for the operator deployment to reflect the changes")
+			Eventually(func() error { return waitForTestCaseLogLevel("info", "default") }, timeout, interval).Should(Succeed())
 		})
 
 		Context("When changing \"--zap-log-level\"", func() {
@@ -160,6 +186,27 @@ var _ = Describe("Testing functionality", func() {
 					initialLogLevel: "error",
 					actualLogLevel:  "error",
 				},
+			}
+
+			for _, variant := range variants {
+				caseName := fmt.Sprintf("Should change it, initialLoglevel='%s', actualLoglevel='%s'", variant.initialLogLevel, variant.actualLogLevel)
+				It(caseName,
+					func() {
+						By(fmt.Sprintf("Setting operator loglevel to %s in kedaController manifest", variant.initialLogLevel))
+						manifest, err = changeAttribute(manifest, "logLevel", variant.initialLogLevel, scheme, caseName)
+						Expect(err).To(BeNil())
+						err = manifest.Apply()
+						Expect(err).To(BeNil())
+						By("Waiting for the operator deployment to reflect the changes")
+						Eventually(func() error { return waitForTestCaseLogLevel(variant.initialLogLevel, caseName) }, timeout, interval).Should(Succeed())
+
+					})
+			}
+
+			variants = []struct {
+				initialLogLevel string
+				actualLogLevel  string
+			}{
 				{
 					initialLogLevel: "",
 					actualLogLevel:  "info",
@@ -171,26 +218,18 @@ var _ = Describe("Testing functionality", func() {
 			}
 
 			for _, variant := range variants {
-				It(fmt.Sprintf("Should change it, initialLoglevel='%s', actualLoglevel='%s'",
-					variant.initialLogLevel, variant.actualLogLevel), func() {
+				caseName := fmt.Sprintf("Should not change it, initialLoglevel='%s', actualLoglevel='%s'", variant.initialLogLevel, variant.actualLogLevel)
+				It(caseName,
+					func() {
+						By(fmt.Sprintf("Setting operator loglevel to %s in kedaController manifest", variant.initialLogLevel))
+						manifest, err = changeAttribute(manifest, "logLevel", variant.initialLogLevel, scheme, caseName)
+						Expect(err).To(BeNil())
+						err = manifest.Apply()
+						Expect(err).To(BeNil())
+						By("Waiting for the operator deployment to reflect the changes")
+						Eventually(func() error { return waitForTestCaseLogLevel(variant.actualLogLevel, caseName) }, timeout, interval).Should(Succeed())
 
-					manifest, err = changeAttribute(manifest, "logLevel", variant.initialLogLevel, scheme)
-					_ = manifest.Apply()
-
-					Eventually(func() error {
-						_, err = getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-						return err
-					}, timeout, interval).Should(Succeed())
-
-					u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-					Expect(err).To(BeNil())
-					err = scheme.Convert(u, dep, nil)
-					Expect(err).To(BeNil())
-
-					arg, err = getDepArg(dep, logLevelPrefix, containerName)
-					Expect(err).To(BeNil())
-					Expect(arg).To(Equal(variant.actualLogLevel))
-				})
+					})
 			}
 		})
 	})
@@ -209,7 +248,7 @@ var _ = Describe("Testing functionality", func() {
 
 		var (
 			ctx      = context.Background()
-			timeout  = time.Second * 60
+			timeout  = time.Second * 20
 			interval = time.Millisecond * 250
 			scheme   *runtime.Scheme
 			manifest mf.Manifest
@@ -218,11 +257,37 @@ var _ = Describe("Testing functionality", func() {
 			dep      = &appsv1.Deployment{}
 		)
 
+		waitForLogLevelToBe := func(logLevel string, deploymentAnnotation string) error {
+			u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+			if err != nil {
+				return err
+			}
+			err = scheme.Convert(u, dep, nil)
+			if err != nil {
+				return err
+			}
+			arg, err = getDepArg(dep, logLevelPrefix, containerName)
+			if err != nil {
+				return err
+			}
+			testcase, ok := u.GetAnnotations()["testCase"]
+			if ok && deploymentAnnotation == testcase && arg == logLevel {
+				return nil
+			}
+			return fmt.Errorf("log level was not set to %s, log level was %s", logLevel, arg)
+
+		}
+
 		BeforeEach(func() {
+			By("Applying a manifest that defaults admission logLevel back to info")
 			scheme = k8sManager.GetScheme()
 			manifest, err = createManifest(kedaManifestFilepath, k8sClient)
 			Expect(err).To(BeNil())
+			manifest, err = changeAttribute(manifest, "logLevel-admission", "info", scheme, "default")
+			Expect(err).To(BeNil())
 			Expect(manifest.Apply()).Should(Succeed())
+			By("Waiting for the admission deployment to reflect the changes")
+			Eventually(func() error { return waitForLogLevelToBe("info", "default") }, timeout, interval).Should(Succeed())
 		})
 
 		Context("When changing \"--zap-log-level\"", func() {
@@ -242,6 +307,28 @@ var _ = Describe("Testing functionality", func() {
 					initialLogLevel: "error",
 					actualLogLevel:  "error",
 				},
+			}
+
+			for _, variant := range variants {
+				caseName := fmt.Sprintf("Should change it, initialLoglevel='%s', actualLoglevel='%s'", variant.initialLogLevel, variant.actualLogLevel)
+
+				It(caseName, func() {
+					By(fmt.Sprintf("Setting admission loglevel to %s in kedaController manifest", variant.initialLogLevel))
+					manifest, err = changeAttribute(manifest, "logLevel-admission", variant.initialLogLevel, scheme, caseName)
+					Expect(err).To(BeNil())
+					err = manifest.Apply()
+					Expect(err).To(BeNil())
+					By("Waiting for the admission deployment to reflect the changes")
+					Eventually(func() error { return waitForLogLevelToBe(variant.initialLogLevel, caseName) }, timeout, interval).Should(Succeed())
+
+				})
+			}
+
+			variants = []struct {
+				initialLogLevel string
+				actualLogLevel  string
+			}{
+				// the default in the sample kedacontroller manifest is "info", so "info" in this list can also mean "make sure it doesn't change"
 				{
 					initialLogLevel: "",
 					actualLogLevel:  "info",
@@ -253,29 +340,23 @@ var _ = Describe("Testing functionality", func() {
 			}
 
 			for _, variant := range variants {
-				It(fmt.Sprintf("Should change it, initialLoglevel='%s', actualLoglevel='%s'",
-					variant.initialLogLevel, variant.actualLogLevel), func() {
+				caseName := fmt.Sprintf("Should not change it, initialLoglevel='%s', actualLoglevel='%s'", variant.initialLogLevel, variant.actualLogLevel)
 
-					manifest, err = changeAttribute(manifest, "logLevel", variant.initialLogLevel, scheme)
-					_ = manifest.Apply()
-
-					Eventually(func() error {
-						_, err = getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
-						return err
-					}, timeout, interval).Should(Succeed())
-
-					u, err := getObject(ctx, "Deployment", deploymentName, namespace, k8sClient)
+				It(caseName, func() {
+					By(fmt.Sprintf("Setting admission loglevel to %s in kedaController manifest", variant.initialLogLevel))
+					manifest, err = changeAttribute(manifest, "logLevel-admission", variant.initialLogLevel, scheme, caseName)
 					Expect(err).To(BeNil())
-					err = scheme.Convert(u, dep, nil)
+					err = manifest.Apply()
 					Expect(err).To(BeNil())
+					By("Waiting for the admission deployment to reflect the changes")
+					Eventually(func() error { return waitForLogLevelToBe(variant.actualLogLevel, caseName) }, timeout, interval).Should(Succeed())
 
-					arg, err = getDepArg(dep, logLevelPrefix, containerName)
-					Expect(err).To(BeNil())
-					Expect(arg).To(Equal(variant.actualLogLevel))
 				})
 			}
+
 		})
 	})
+
 })
 
 var _ = Describe("Testing audit flags", func() {
@@ -335,7 +416,7 @@ var _ = Describe("Testing audit flags", func() {
 			for _, variant := range vars {
 
 				It(fmt.Sprintf("adds '%s' with value '%s'", variant.argument, variant.value), func() {
-					manifest, err := changeAttribute(manifest, variant.argument, variant.value, scheme)
+					manifest, err := changeAttribute(manifest, variant.argument, variant.value, scheme, "")
 					Expect(manifest.Apply()).To(Succeed())
 					Eventually(func() error {
 						_, err = getObject(ctx, "Deployment", metricsServerName, namespace, k8sClient)
@@ -369,18 +450,42 @@ func getDepArg(dep *appsv1.Deployment, prefix string, containerName string) (str
 	return "", errors.New("Could not find a container: " + containerName)
 }
 
-func changeAttribute(manifest mf.Manifest, attr string, value string, scheme *runtime.Scheme) (mf.Manifest, error) {
+func changeAttribute(manifest mf.Manifest, attr string, value string, scheme *runtime.Scheme, annotation string) (mf.Manifest, error) {
 	transformer := func(u *unstructured.Unstructured) error {
 		kedaControllerInstance := &kedav1alpha1.KedaController{}
 		if err := scheme.Convert(u, kedaControllerInstance, nil); err != nil {
 			return err
 		}
 
+		// Annotations might be nil, so we need to make sure we account for that
+		if kedaControllerInstance.Spec.Operator.DeploymentAnnotations == nil {
+			kedaControllerInstance.Spec.Operator.DeploymentAnnotations = make(map[string]string)
+		}
+
+		if kedaControllerInstance.Spec.AdmissionWebhooks.DeploymentAnnotations == nil {
+			kedaControllerInstance.Spec.AdmissionWebhooks.DeploymentAnnotations = make(map[string]string)
+		}
+		if kedaControllerInstance.Spec.MetricsServer.DeploymentAnnotations == nil {
+			kedaControllerInstance.Spec.MetricsServer.DeploymentAnnotations = make(map[string]string)
+		}
+
+		// When we push through an attribute change, we also set an annotation matching the test case
+		// so we can be sure the controller reacted to our kedaControlelrInstance updates and we have "our"
+		// changes, not just some changes that might be from a previous test case
+		kedaControllerInstance.Spec.Operator.DeploymentAnnotations["testCase"] = annotation
+		kedaControllerInstance.Spec.AdmissionWebhooks.DeploymentAnnotations["testCase"] = annotation
+		kedaControllerInstance.Spec.MetricsServer.DeploymentAnnotations["testCase"] = annotation
+
 		switch attr {
 		case "namespace":
 			kedaControllerInstance.Namespace = value
 		case "logLevel":
 			kedaControllerInstance.Spec.Operator.LogLevel = value
+		// TODO(jkyros): should probably a separate arg or separate function, this
+		// breaks pattern with the rest of these cases but multiple operands have
+		// the same field and we wanted to explicitly test admission loglevel separately
+		case "logLevel-admission":
+			kedaControllerInstance.Spec.AdmissionWebhooks.LogLevel = value
 		// metricsServer audit arguments
 		case "auditLogFormat":
 			kedaControllerInstance.Spec.MetricsServer.AuditConfig.LogFormat = value
